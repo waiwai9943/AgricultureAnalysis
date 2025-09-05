@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Farmland Profitability System (GEE Edition)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1.10.4/dayjs.min.js"></script>
+    <style>
+        body, html, #app-container {
+            height: 100%;
+        }
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+        .leaflet-container {
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .report-section {
+            display: none;
+        }
+        #loading-spinner {
+            display: none;
+        }
+        #results-container {
+            display: none;
+        }
+    </style>
+</head>
+<body class="font-sans antialiased bg-gray-50 text-gray-800">
+
+    <div id="app-container" class="min-h-screen flex flex-col p-4 md:p-8">
+        <header class="bg-white rounded-xl shadow-lg p-4 mb-4 md:mb-8 flex flex-col md:flex-row items-center justify-between">
+            <h1 class="text-3xl font-bold text-gray-900 mb-2 md:mb-0">Farmland Profitability System</h1>
+            <p class="text-sm md:text-base text-gray-500 text-center">Powered by Google Earth Engine</p>
+        </header>
+
+        <div class="flex-grow grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-8">
+            <div class="md:col-span-2 flex flex-col h-full bg-white rounded-xl shadow-lg p-4">
+                <div class="flex-shrink-0 mb-4">
+                    <h2 class="text-2xl font-semibold text-gray-700 mb-2">1. Select Your Farmland</h2>
+                    <p class="text-gray-500">Use the polygon tool on the map to draw the boundaries of your field.</p>
+                </div>
+                <div id="map" class="flex-grow"></div>
+            </div>
+
+            <div class="md:col-span-1 flex flex-col h-full bg-white rounded-xl shadow-lg p-4">
+                <div class="flex-shrink-0 mb-4 pb-4 border-b border-gray-200">
+                    <h2 class="text-2xl font-semibold text-gray-700 mb-2">2. Analyze the Data</h2>
+                    <div class="space-y-4">
+                        <div>
+                            <label for="start-date" class="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                            <input type="date" id="start-date" class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500" value="2024-05-01">
+                        </div>
+                        <div>
+                            <label for="end-date" class="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                            <input type="date" id="end-date" class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500" value="2024-05-30">
+                        </div>
+                        <button id="analyze-button" class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-full shadow-lg hover:bg-green-700 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50">
+                            Analyze Farmland
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex-grow overflow-y-auto">
+                    <div id="loading-spinner" class="flex flex-col items-center justify-center p-8">
+                        <svg class="animate-spin h-10 w-10 text-green-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <p class="mt-4 text-gray-600">Analyzing with Google Earth Engine...</p>
+                    </div>
+                    
+                    <div id="results-container">
+                        <h2 class="text-2xl font-semibold text-gray-700 mb-4">3. Analysis Report</h2>
+                        <div id="analysis-results" class="space-y-4">
+                            <div id="ndvi-container" class="report-section bg-gray-50 p-4 rounded-lg">
+                                <h3 class="font-bold text-gray-800 text-lg mb-2">Vegetation Health Map</h3>
+                                <div class="w-full aspect-square border border-gray-300 rounded-md overflow-hidden">
+                                    <img id="ndvi-map-image" class="w-full h-full object-cover" alt="NDVI Vegetation Map">
+                                </div>
+                                <div class="mt-4 text-sm text-gray-600">
+                                    <p>Green areas indicate healthy, dense vegetation.</p>
+                                    <p>Yellow and red areas may indicate stressed or unhealthy crops.</p>
+                                </div>
+                            </div>
+                            
+                            <div id="report-summary" class="report-section bg-gray-50 p-4 rounded-lg">
+                                <h3 class="font-bold text-gray-800 text-lg mb-2">Detailed Report</h3>
+                                <p class="text-sm text-gray-600">This report is based on the satellite image acquired on <span id="image-date" class="font-semibold"></span>.</p>
+                                <div class="mt-2 space-y-1">
+                                    <p class="flex justify-between items-center text-gray-700">
+                                        <span class="font-semibold">Good Health:</span>
+                                        <span id="good-health" class="text-green-600 font-bold"></span>
+                                    </p>
+                                    <p class="flex justify-between items-center text-gray-700">
+                                        <span class="font-semibold">Moderate Health:</span>
+                                        <span id="moderate-health" class="text-yellow-600 font-bold"></span>
+                                    </p>
+                                    <p class="flex justify-between items-center text-gray-700">
+                                        <span class="font-semibold">Poor Health:</span>
+                                        <span id="poor-health" class="text-red-600 font-bold"></span>
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div id="profitability-insights" class="report-section bg-gray-50 p-4 rounded-lg">
+                                <h3 class="font-bold text-gray-800 text-lg mb-2">Profitability Insights</h3>
+                                <div id="insights-text" class="prose text-sm text-gray-700">
+                                    </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="message-box" class="hidden p-4 mt-4 text-sm text-center bg-blue-100 text-blue-700 rounded-lg" role="alert">
+                        <span id="message-text" class="font-medium">Draw a polygon on the map and click "Analyze"!</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script type="text/javascript">
+        document.addEventListener('DOMContentLoaded', () => {
+            const analyzeButton = document.getElementById('analyze-button');
+            const loadingSpinner = document.getElementById('loading-spinner');
+            const resultsContainer = document.getElementById('results-container');
+            const messageBox = document.getElementById('message-box');
+            const messageText = document.getElementById('message-text');
+
+            // Initialize the map centered on Richmond, BC
+            const map = L.map('map').setView([49.166592, -123.133568], 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            // Initialize Leaflet.draw
+            const drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
+            const drawControl = new L.Control.Draw({
+                edit: { featureGroup: drawnItems },
+                draw: {
+                    polygon: true,
+                    polyline: false, circle: false, marker: false,
+                    rectangle: false, circlemarker: false,
+                },
+            });
+            map.addControl(drawControl);
+
+            let drawnPolygon = null;
+
+            map.on(L.Draw.Event.CREATED, (e) => {
+                const layer = e.layer;
+                drawnItems.clearLayers();
+                drawnItems.addLayer(layer);
+                drawnPolygon = layer;
+                showMessage('Geometry ready. Click "Analyze Farmland"!', 'bg-blue-100 text-blue-700');
+            });
+            
+            map.on(L.Draw.Event.DELETED, () => {
+                drawnPolygon = null;
+                showMessage('Draw a polygon on the map to start.', 'bg-yellow-100 text-yellow-700');
+            });
+
+            analyzeButton.addEventListener('click', analyzeFarmland);
+
+            // --- GOOGLE EARTH ENGINE WORKFLOW ---
+            // The heavy data processing is now offloaded to a backend server.
+            // The browser sends a request with the area of interest (polygon) and dates.
+            // The server uses the Google Earth Engine API to perform the analysis
+            // and returns the final results (a map image and statistics).
+
+            async function analyzeFarmland() {
+                if (!drawnPolygon) {
+                    showMessage('Please draw a polygon on the map first.', 'bg-red-100 text-red-700');
+                    return;
+                }
+
+                const startDate = document.getElementById('start-date').value;
+                const endDate = document.getElementById('end-date').value;
+                const polygonGeoJSON = drawnPolygon.toGeoJSON();
+
+                if (!startDate || !endDate) {
+                    showMessage('Please select a start and end date.', 'bg-red-100 text-red-700');
+                    return;
+                }
+                
+                showLoading();
+                hideResults();
+
+                try {
+                    // In a real application, this would be a fetch() call to your backend endpoint,
+                    // e.g., fetch('/api/gee-analysis', { method: 'POST', ... })
+                    const geeResponse = await mockGeeBackend(polygonGeoJSON, startDate, endDate);
+
+                    if (!geeResponse) {
+                        throw new Error('No data returned from GEE service.');
+                    }
+
+                    // Update UI with results from the backend
+                    document.getElementById('ndvi-map-image').src = geeResponse.mapUrl;
+                    updateReport(geeResponse.report, geeResponse.acquisitionDate);
+                    updateProfitabilityInsights(geeResponse.report);
+
+                    hideLoading();
+                    showResults();
+
+                } catch (error) {
+                    console.error('An error occurred during analysis:', error);
+                    showMessage('Analysis failed. The GEE service might be unavailable or no imagery was found.', 'bg-red-100 text-red-700');
+                    hideLoading();
+                }
+            }
+
+            /**
+             * MOCK BACKEND FUNCTION
+             * This function simulates a call to a backend server that runs Google Earth Engine.
+             */
+            async function mockGeeBackend(polygon, start, end) {
+                console.log("Sending to mock GEE backend:", { polygon, start, end });
+
+                // --- START: This logic would run on your server using GEE's API ---
+                // 1. Initialize GEE
+                // ee.initialize();
+
+                // 2. Define Area of Interest (AOI)
+                // const aoi = ee.Geometry(polygon.geometry);
+
+                // 3. Filter Sentinel-2 Image Collection
+                // const collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                //     .filterBounds(aoi)
+                //     .filterDate(start, end)
+                //     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20));
+
+                // 4. Select the best image (e.g., create a median composite)
+                // const image = collection.median().clip(aoi);
+
+                // 5. Calculate NDVI
+                // const ndvi = image.normalizedDifference(['B8', 'B4']); // B8=NIR, B4=Red
+                // const ndviPalette = ['#d73027', '#fee08b', '#a6d96a', '#1a9850'];
+                // const ndviVisParams = { min: 0, max: 0.8, palette: ndviPalette };
+
+                // 6. Generate Map Image URL
+                // const mapUrl = ndvi.getThumbURL({ ...ndviVisParams, dimensions: 512 });
+                
+                // 7. Calculate Statistics
+                // const poor = ndvi.lt(0.2).multiply(ee.Image.pixelArea()).reduceRegion(...).get('nd');
+                // const moderate = ndvi.gte(0.2).and(ndvi.lt(0.5)).multiply(ee.Image.pixelArea()).reduceRegion(...);
+                // const good = ndvi.gte(0.5).multiply(ee.Image.pixelArea()).reduceRegion(...);
+                // The server would calculate percentages from these area values.
+                
+                // --- END: Server Logic ---
+                
+                // Simulate network delay
+                await new Promise(resolve => setTimeout(resolve, 1500));
+
+                // Generate a fake report
+                const poor = Math.random() * 20; // 0-20%
+                const moderate = Math.random() * 30; // 0-30%
+                const good = 100 - poor - moderate;
+                const mockReport = {
+                    poor: poor,
+                    moderate: moderate,
+                    good: good
+                };
+
+                // Generate a simple placeholder image using canvas
+                const canvas = document.createElement('canvas');
+                canvas.width = 512;
+                canvas.height = 512;
+                const ctx = canvas.getContext('2d');
+                const grad = ctx.createLinearGradient(0, 0, 512, 512);
+                grad.addColorStop(0, '#d73027'); // Red
+                grad.addColorStop(0.5, '#fee08b'); // Yellow
+                grad.addColorStop(1, '#1a9850'); // Green
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, 512, 512);
+                ctx.font = '24px sans-serif';
+                ctx.fillStyle = 'black';
+                ctx.textAlign = 'center';
+                ctx.fillText('Mock GEE NDVI Map', 256, 256);
+                
+                // Return what the backend's JSON response would look like
+                return {
+                    mapUrl: canvas.toDataURL(),
+                    report: mockReport,
+                    acquisitionDate: dayjs(end).subtract(5, 'day').format('YYYY-MM-DD') // Mock date
+                };
+            }
+
+            function updateReport(report, date) {
+                document.getElementById('good-health').textContent = `${report.good.toFixed(2)}%`;
+                document.getElementById('moderate-health').textContent = `${report.moderate.toFixed(2)}%`;
+                document.getElementById('poor-health').textContent = `${report.poor.toFixed(2)}%`;
+                document.getElementById('image-date').textContent = dayjs(date).format('MMMM D, YYYY');
+            }
+
+            function updateProfitabilityInsights(report) {
+                const insights = document.getElementById('insights-text');
+                let html = '';
+
+                if (report.poor > 15) {
+                    html += `
+                        <p class="font-bold text-red-700">Warning: Significant areas of poor vegetation health detected (${report.poor.toFixed(2)}%).</p>
+                        <ul class="list-disc pl-5 mt-2 space-y-2">
+                            <li><span class="font-semibold">Profitability Risk:</span> These areas may indicate water stress, nutrient deficiency, or pest infestation. Without intervention, they could lead to significant yield loss and reduced revenue.</li>
+                            <li><span class="font-semibold">Actionable Insight:</span> Consider targeted soil or leaf tissue sampling in these specific zones to identify the root cause. Precision irrigation or fertilization can increase yield and save on input costs.</li>
+                        </ul>
+                    `;
+                }
+                
+                if (report.moderate > 20) {
+                    html += `
+                        <p class="font-bold text-yellow-700 mt-4">Potential for Improvement: Moderate health areas detected (${report.moderate.toFixed(2)}%).</p>
+                        <ul class="list-disc pl-5 mt-2 space-y-2">
+                            <li><span class="font-semibold">Profitability Opportunity:</span> These zones are performing but could be optimized. They represent a key opportunity to boost overall farm yield.</li>
+                            <li><span class="font-semibold">Actionable Insight:</span> Implement variable rate application of fertilizer or water in these zones. A small increase in input can lead to a disproportionate gain in yield, maximizing your return on investment.</li>
+                        </ul>
+                    `;
+                }
+
+                if (report.good > 50) {
+                     html += `
+                        <p class="font-bold text-green-700 mt-4">Excellent Crop Vigor: High health areas detected (${report.good.toFixed(2)}%).</p>
+                        <ul class="list-disc pl-5 mt-2 space-y-2">
+                            <li><span class="font-semibold">Profitability Management:</span> Your most productive zones are confirmed. Focus on maintaining these conditions and protecting them from external stressors.</li>
+                            <li><span class="font-semibold">Actionable Insight:</span> Use this data as a baseline for future comparisons. Also, consider reducing inputs in these zones if they are over-performing to save on costs without sacrificing yield.</li>
+                        </ul>
+                    `;
+                }
+
+                if (html === '') {
+                    html = '<p>No specific insights to report. Analysis is based on current conditions. Continue to monitor for changes.</p>';
+                }
+
+                insights.innerHTML = html;
+            }
+
+            // --- UI Helper Functions ---
+            function showMessage(text, className) {
+                messageBox.className = 'p-4 mt-4 text-sm text-center rounded-lg'; // Reset classes
+                messageBox.classList.add(...className.split(' '));
+                messageText.textContent = text;
+            }
+
+            function showLoading() {
+                loadingSpinner.style.display = 'flex';
+                messageBox.classList.add('hidden');
+            }
+
+            function hideLoading() {
+                loadingSpinner.style.display = 'none';
+            }
+            
+            function showResults() {
+                resultsContainer.style.display = 'block';
+                document.querySelectorAll('.report-section').forEach(el => el.style.display = 'block');
+            }
+            
+            function hideResults() {
+                resultsContainer.style.display = 'none';
+            }
+            
+            showMessage('Draw a polygon on the map to start.', 'bg-blue-100 text-blue-700');
+        });
+    </script>
+</body>
+</html>
