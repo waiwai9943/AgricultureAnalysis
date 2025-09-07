@@ -126,249 +126,176 @@
         </div>
     </div>
     
+    
     <script type="text/javascript">
-        document.addEventListener('DOMContentLoaded', () => {
-            const analyzeButton = document.getElementById('analyze-button');
-            const loadingSpinner = document.getElementById('loading-spinner');
-            const resultsContainer = document.getElementById('results-container');
-            const messageBox = document.getElementById('message-box');
-            const messageText = document.getElementById('message-text');
+        document.addEventListener('DOMContentLoaded', () => {
+            const analyzeButton = document.getElementById('analyze-button');
+            const loadingSpinner = document.getElementById('loading-spinner');
+            const resultsContainer = document.getElementById('results-container');
+            const messageBox = document.getElementById('message-box');
+            const messageText = document.getElementById('message-text');
 
-            // Initialize the map centered on Richmond, BC
-            const map = L.map('map').setView([49.166592, -123.133568], 12);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            }).addTo(map);
+            // Initialize the map centered on Richmond, BC
+            const map = L.map('map').setView([49.166592, -123.133568], 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
 
-            // Initialize Leaflet.draw
-            const drawnItems = new L.FeatureGroup();
-            map.addLayer(drawnItems);
-            const drawControl = new L.Control.Draw({
-                edit: { featureGroup: drawnItems },
-                draw: {
-                    polygon: true,
-                    polyline: false, circle: false, marker: false,
-                    rectangle: false, circlemarker: false,
-                },
-            });
-            map.addControl(drawControl);
+            // Initialize Leaflet.draw
+            const drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
+            const drawControl = new L.Control.Draw({
+                edit: { featureGroup: drawnItems },
+                draw: {
+                    polygon: true,
+                    polyline: false, circle: false, marker: false,
+                    rectangle: false, circlemarker: false,
+                },
+            });
+            map.addControl(drawControl);
 
-            let drawnPolygon = null;
+            let drawnPolygon = null;
 
-            map.on(L.Draw.Event.CREATED, (e) => {
-                const layer = e.layer;
-                drawnItems.clearLayers();
-                drawnItems.addLayer(layer);
-                drawnPolygon = layer;
-                showMessage('Geometry ready. Click "Analyze Farmland"!', 'bg-blue-100 text-blue-700');
-            });
-            
-            map.on(L.Draw.Event.DELETED, () => {
-                drawnPolygon = null;
-                showMessage('Draw a polygon on the map to start.', 'bg-yellow-100 text-yellow-700');
-            });
+            map.on(L.Draw.Event.CREATED, (e) => {
+                const layer = e.layer;
+                drawnItems.clearLayers();
+                drawnItems.addLayer(layer);
+                drawnPolygon = layer;
+                showMessage('Geometry ready. Click "Analyze Farmland"!', 'bg-blue-100 text-blue-700');
+            });
+            
+            map.on(L.Draw.Event.DELETED, () => {
+                drawnPolygon = null;
+                showMessage('Draw a polygon on the map to start.', 'bg-yellow-100 text-yellow-700');
+            });
 
-            analyzeButton.addEventListener('click', analyzeFarmland);
+            analyzeButton.addEventListener('click', analyzeFarmland);
 
-            // --- GOOGLE EARTH ENGINE WORKFLOW ---
-            // The heavy data processing is now offloaded to a backend server.
-            // The browser sends a request with the area of interest (polygon) and dates.
-            // The server uses the Google Earth Engine API to perform the analysis
-            // and returns the final results (a map image and statistics).
+            async function analyzeFarmland() {
+                if (!drawnPolygon) {
+                    showMessage('Please draw a polygon on the map first.', 'bg-red-100 text-red-700');
+                    return;
+                }
 
-            async function analyzeFarmland() {
-                if (!drawnPolygon) {
-                    showMessage('Please draw a polygon on the map first.', 'bg-red-100 text-red-700');
-                    return;
-                }
+                const startDate = document.getElementById('start-date').value;
+                const endDate = document.getElementById('end-date').value;
+                const polygonGeoJSON = drawnPolygon.toGeoJSON();
 
-                const startDate = document.getElementById('start-date').value;
-                const endDate = document.getElementById('end-date').value;
-                const polygonGeoJSON = drawnPolygon.toGeoJSON();
+                if (!startDate || !endDate) {
+                    showMessage('Please select a start and end date.', 'bg-red-100 text-red-700');
+                    return;
+                }
+                
+                showLoading();
+                hideResults();
 
-                if (!startDate || !endDate) {
-                    showMessage('Please select a start and end date.', 'bg-red-100 text-red-700');
-                    return;
-                }
-                
-                showLoading();
-                hideResults();
+                try {
+                    const response = await fetch('/analyze', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            polygon: polygonGeoJSON.geometry,
+                            startDate,
+                            endDate
+                        })
+                    });
+                    
+                    const geeResponse = await response.json();
 
-                try {
-                    // In a real application, this would be a fetch() call to your backend endpoint,
-                    // e.g., fetch('/api/gee-analysis', { method: 'POST', ... })
-                    const geeResponse = await mockGeeBackend(polygonGeoJSON, startDate, endDate);
+                    if (geeResponse.error) {
+                        throw new Error(geeResponse.error);
+                    }
 
-                    if (!geeResponse) {
-                        throw new Error('No data returned from GEE service.');
-                    }
+                    // Update UI with results from the backend
+                    document.getElementById('ndvi-map-image').src = geeResponse.mapUrl;
+                    updateReport(geeResponse.report, geeResponse.acquisitionDate);
+                    updateProfitabilityInsights(geeResponse.report);
 
-                    // Update UI with results from the backend
-                    document.getElementById('ndvi-map-image').src = geeResponse.mapUrl;
-                    updateReport(geeResponse.report, geeResponse.acquisitionDate);
-                    updateProfitabilityInsights(geeResponse.report);
+                    hideLoading();
+                    showResults();
 
-                    hideLoading();
-                    showResults();
+                } catch (error) {
+                    console.error('An error occurred during analysis:', error);
+                    showMessage('Analysis failed. The GEE service might be unavailable or no imagery was found.', 'bg-red-100 text-red-700');
+                    hideLoading();
+                }
+            }
 
-                } catch (error) {
-                    console.error('An error occurred during analysis:', error);
-                    showMessage('Analysis failed. The GEE service might be unavailable or no imagery was found.', 'bg-red-100 text-red-700');
-                    hideLoading();
-                }
-            }
+            function updateReport(report, date) {
+                document.getElementById('good-health').textContent = `${report.good.toFixed(2)}%`;
+                document.getElementById('moderate-health').textContent = `${report.moderate.toFixed(2)}%`;
+                document.getElementById('poor-health').textContent = `${report.poor.toFixed(2)}%`;
+                document.getElementById('image-date').textContent = dayjs(date).format('MMMM D, YYYY');
+            }
 
-            /**
-             * MOCK BACKEND FUNCTION
-             * This function simulates a call to a backend server that runs Google Earth Engine.
-             */
-            async function mockGeeBackend(polygon, start, end) {
-                console.log("Sending to mock GEE backend:", { polygon, start, end });
+            function updateProfitabilityInsights(report) {
+                const insights = document.getElementById('insights-text');
+                let html = '';
 
-                // --- START: This logic would run on your server using GEE's API ---
-                // 1. Initialize GEE
-                // ee.initialize();
+                if (report.poor > 15) {
+                    html += `
+                        <p class="font-bold text-red-700">Warning: Significant areas of poor vegetation health detected (${report.poor.toFixed(2)}%).</p>
+                        <ul class="list-disc pl-5 mt-2 space-y-2">
+                            <li><span class="font-semibold">Profitability Risk:</span> These areas may indicate water stress, nutrient deficiency, or pest infestation. Without intervention, they could lead to significant yield loss and reduced revenue.</li>
+                            <li><span class="font-semibold">Actionable Insight:</span> Consider targeted soil or leaf tissue sampling in these specific zones to identify the root cause. Precision irrigation or fertilization can increase yield and save on input costs.</li>
+                        </ul>
+                    `;
+                }
+                
+                if (report.moderate > 20) {
+                    html += `
+                        <p class="font-bold text-yellow-700 mt-4">Potential for Improvement: Moderate health areas detected (${report.moderate.toFixed(2)}%).</p>
+                        <ul class="list-disc pl-5 mt-2 space-y-2">
+                            <li><span class="font-semibold">Profitability Opportunity:</span> These zones are performing but could be optimized. They represent a key opportunity to boost overall farm yield.</li>
+                            <li><span class="font-semibold">Actionable Insight:</span> Implement variable rate application of fertilizer or water in these zones. A small increase in input can lead to a disproportionate gain in yield, maximizing your return on investment.</li>
+                        </ul>
+                    `;
+                }
 
-                // 2. Define Area of Interest (AOI)
-                // const aoi = ee.Geometry(polygon.geometry);
+                if (report.good > 50) {
+                     html += `
+                        <p class="font-bold text-green-700 mt-4">Excellent Crop Vigor: High health areas detected (${report.good.toFixed(2)}%).</p>
+                        <ul class="list-disc pl-5 mt-2 space-y-2">
+                            <li><span class="font-semibold">Profitability Management:</span> Your most productive zones are confirmed. Focus on maintaining these conditions and protecting them from external stressors.</li>
+                            <li><span class="font-semibold">Actionable Insight:</span> Use this data as a baseline for future comparisons. Also, consider reducing inputs in these zones if they are over-performing to save on costs without sacrificing yield.</li>
+                        </ul>
+                    `;
+                }
 
-                // 3. Filter Sentinel-2 Image Collection
-                // const collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-                //     .filterBounds(aoi)
-                //     .filterDate(start, end)
-                //     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20));
+                if (html === '') {
+                    html = '<p>No specific insights to report. Analysis is based on current conditions. Continue to monitor for changes.</p>';
+                }
 
-                // 4. Select the best image (e.g., create a median composite)
-                // const image = collection.median().clip(aoi);
+                insights.innerHTML = html;
+            }
 
-                // 5. Calculate NDVI
-                // const ndvi = image.normalizedDifference(['B8', 'B4']); // B8=NIR, B4=Red
-                // const ndviPalette = ['#d73027', '#fee08b', '#a6d96a', '#1a9850'];
-                // const ndviVisParams = { min: 0, max: 0.8, palette: ndviPalette };
+            // --- UI Helper Functions ---
+            function showMessage(text, className) {
+                messageBox.className = 'p-4 mt-4 text-sm text-center rounded-lg'; // Reset classes
+                messageBox.classList.add(...className.split(' '));
+                messageText.textContent = text;
+            }
 
-                // 6. Generate Map Image URL
-                // const mapUrl = ndvi.getThumbURL({ ...ndviVisParams, dimensions: 512 });
-                
-                // 7. Calculate Statistics
-                // const poor = ndvi.lt(0.2).multiply(ee.Image.pixelArea()).reduceRegion(...).get('nd');
-                // const moderate = ndvi.gte(0.2).and(ndvi.lt(0.5)).multiply(ee.Image.pixelArea()).reduceRegion(...);
-                // const good = ndvi.gte(0.5).multiply(ee.Image.pixelArea()).reduceRegion(...);
-                // The server would calculate percentages from these area values.
-                
-                // --- END: Server Logic ---
-                
-                // Simulate network delay
-                await new Promise(resolve => setTimeout(resolve, 1500));
+            function showLoading() {
+                loadingSpinner.style.display = 'flex';
+                messageBox.classList.add('hidden');
+            }
 
-                // Generate a fake report
-                const poor = Math.random() * 20; // 0-20%
-                const moderate = Math.random() * 30; // 0-30%
-                const good = 100 - poor - moderate;
-                const mockReport = {
-                    poor: poor,
-                    moderate: moderate,
-                    good: good
-                };
-
-                // Generate a simple placeholder image using canvas
-                const canvas = document.createElement('canvas');
-                canvas.width = 512;
-                canvas.height = 512;
-                const ctx = canvas.getContext('2d');
-                const grad = ctx.createLinearGradient(0, 0, 512, 512);
-                grad.addColorStop(0, '#d73027'); // Red
-                grad.addColorStop(0.5, '#fee08b'); // Yellow
-                grad.addColorStop(1, '#1a9850'); // Green
-                ctx.fillStyle = grad;
-                ctx.fillRect(0, 0, 512, 512);
-                ctx.font = '24px sans-serif';
-                ctx.fillStyle = 'black';
-                ctx.textAlign = 'center';
-                ctx.fillText('Mock GEE NDVI Map', 256, 256);
-                
-                // Return what the backend's JSON response would look like
-                return {
-                    mapUrl: canvas.toDataURL(),
-                    report: mockReport,
-                    acquisitionDate: dayjs(end).subtract(5, 'day').format('YYYY-MM-DD') // Mock date
-                };
-            }
-
-            function updateReport(report, date) {
-                document.getElementById('good-health').textContent = `${report.good.toFixed(2)}%`;
-                document.getElementById('moderate-health').textContent = `${report.moderate.toFixed(2)}%`;
-                document.getElementById('poor-health').textContent = `${report.poor.toFixed(2)}%`;
-                document.getElementById('image-date').textContent = dayjs(date).format('MMMM D, YYYY');
-            }
-
-            function updateProfitabilityInsights(report) {
-                const insights = document.getElementById('insights-text');
-                let html = '';
-
-                if (report.poor > 15) {
-                    html += `
-                        <p class="font-bold text-red-700">Warning: Significant areas of poor vegetation health detected (${report.poor.toFixed(2)}%).</p>
-                        <ul class="list-disc pl-5 mt-2 space-y-2">
-                            <li><span class="font-semibold">Profitability Risk:</span> These areas may indicate water stress, nutrient deficiency, or pest infestation. Without intervention, they could lead to significant yield loss and reduced revenue.</li>
-                            <li><span class="font-semibold">Actionable Insight:</span> Consider targeted soil or leaf tissue sampling in these specific zones to identify the root cause. Precision irrigation or fertilization can increase yield and save on input costs.</li>
-                        </ul>
-                    `;
-                }
-                
-                if (report.moderate > 20) {
-                    html += `
-                        <p class="font-bold text-yellow-700 mt-4">Potential for Improvement: Moderate health areas detected (${report.moderate.toFixed(2)}%).</p>
-                        <ul class="list-disc pl-5 mt-2 space-y-2">
-                            <li><span class="font-semibold">Profitability Opportunity:</span> These zones are performing but could be optimized. They represent a key opportunity to boost overall farm yield.</li>
-                            <li><span class="font-semibold">Actionable Insight:</span> Implement variable rate application of fertilizer or water in these zones. A small increase in input can lead to a disproportionate gain in yield, maximizing your return on investment.</li>
-                        </ul>
-                    `;
-                }
-
-                if (report.good > 50) {
-                     html += `
-                        <p class="font-bold text-green-700 mt-4">Excellent Crop Vigor: High health areas detected (${report.good.toFixed(2)}%).</p>
-                        <ul class="list-disc pl-5 mt-2 space-y-2">
-                            <li><span class="font-semibold">Profitability Management:</span> Your most productive zones are confirmed. Focus on maintaining these conditions and protecting them from external stressors.</li>
-                            <li><span class="font-semibold">Actionable Insight:</span> Use this data as a baseline for future comparisons. Also, consider reducing inputs in these zones if they are over-performing to save on costs without sacrificing yield.</li>
-                        </ul>
-                    `;
-                }
-
-                if (html === '') {
-                    html = '<p>No specific insights to report. Analysis is based on current conditions. Continue to monitor for changes.</p>';
-                }
-
-                insights.innerHTML = html;
-            }
-
-            // --- UI Helper Functions ---
-            function showMessage(text, className) {
-                messageBox.className = 'p-4 mt-4 text-sm text-center rounded-lg'; // Reset classes
-                messageBox.classList.add(...className.split(' '));
-                messageText.textContent = text;
-            }
-
-            function showLoading() {
-                loadingSpinner.style.display = 'flex';
-                messageBox.classList.add('hidden');
-            }
-
-            function hideLoading() {
-                loadingSpinner.style.display = 'none';
-            }
-            
-            function showResults() {
-                resultsContainer.style.display = 'block';
-                document.querySelectorAll('.report-section').forEach(el => el.style.display = 'block');
-            }
-            
-            function hideResults() {
-                resultsContainer.style.display = 'none';
-            }
-            
-            showMessage('Draw a polygon on the map to start.', 'bg-blue-100 text-blue-700');
-        });
-    </script>
+            function hideLoading() {
+                loadingSpinner.style.display = 'none';
+            }
+            
+            function showResults() {
+                resultsContainer.style.display = 'block';
+                document.querySelectorAll('.report-section').forEach(el => el.style.display = 'block');
+            }
+            
+            function hideResults() {
+                resultsContainer.style.display = 'none';
+            }
+            
+            showMessage('Draw a polygon on the map to start.', 'bg-blue-100 text-blue-700');
+        });
+    </script>
 </body>
 </html>
