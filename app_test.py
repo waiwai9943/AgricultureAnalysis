@@ -124,7 +124,7 @@ def analyze():
 
 if __name__ == '__main__':
     service_ac = "user-374@agri-471404.iam.gserviceaccount.com"
-    credentials = ee.ServiceAccountCredentials(service_ac, 'gee/agri-471404-6da4ecee8723.json')  
+    credentials = ee.ServiceAccountCredentials(service_ac, '.gitignore/gee/agri-471404-6da4ecee8723.json')  
     # Initialize GEE once when the app starts
     try:
         ee.Initialize(credentials)
