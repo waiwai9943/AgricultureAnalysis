@@ -20,26 +20,30 @@ def analyze_gee(polygon_geojson, start_date, end_date):
         collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED') \
             .filterBounds(aoi) \
             .filterDate(start_date, end_date) \
-            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40)) \
+            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20)) \
             .sort('CLOUDY_PIXEL_PERCENTAGE')
 
         if collection.size().getInfo() == 0:
             return {"error": "No suitable imagery found for the selected area and date range."}
 
         # Select the least cloudy image
-        image = collection.first().clip(aoi)
-
+        image = collection.median().clip(aoi)
+        
         # Get the image acquisition date for the report
-        acquisition_date = ee.Date(image.get('system:time_start')).format('YYYY-MM-DD').getInfo()
+        acquisition_date = ee.Date(collection.first().get('system:time_start')).format('YYYY-MM-DD').getInfo()
 
-        # Calculate NDVI
-        ndvi = image.normalizedDifference(['B8', 'B4']) # B8 is NIR, B4 is Red
+
+        # ==================================
+        # 1. VEGETATION HEALTH ANALYSIS (NDVI)
+        # ==================================
+        # Calculate NDVI: (NIR - Red) / (NIR + Red) and rename the band to 'NDVI'
+        ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI')
 
         # Define NDVI visualization parameters for the map
         ndvi_palette = ['d73027', 'fee08b', 'a6d96a', '1a9850'] # Red, Yellow, Light Green, Dark Green
         
         # Generate a thumbnail URL
-        map_url = ndvi.getThumbUrl({
+        ndvi_map_url = ndvi.getThumbUrl({
             'dimensions': 512,
             'format': 'png',
             'crs': 'EPSG:3857',
@@ -49,41 +53,110 @@ def analyze_gee(polygon_geojson, start_date, end_date):
             'palette': ndvi_palette
         })
 
-        # Calculate the area of each health category
-        poor_area = ndvi.lt(0.2).multiply(ee.Image.pixelArea()).reduceRegion(
+        # Calculate the area of each NDVI health category
+        poor_ndvi_area = ndvi.lt(0.2).multiply(ee.Image.pixelArea()).reduceRegion(
             reducer=ee.Reducer.sum(), geometry=aoi, scale=10, maxPixels=1e9
-        ).get('nd').getInfo()
+        ).get('NDVI').getInfo()
 
-        moderate_area = ndvi.gte(0.2).And(ndvi.lt(0.5)).multiply(ee.Image.pixelArea()).reduceRegion(
+        moderate_ndvi_area = ndvi.gte(0.2).And(ndvi.lt(0.5)).multiply(ee.Image.pixelArea()).reduceRegion(
             reducer=ee.Reducer.sum(), geometry=aoi, scale=10, maxPixels=1e9
-        ).get('nd').getInfo()
+        ).get('NDVI').getInfo()
 
-        good_area = ndvi.gte(0.5).multiply(ee.Image.pixelArea()).reduceRegion(
+        good_ndvi_area = ndvi.gte(0.5).multiply(ee.Image.pixelArea()).reduceRegion(
             reducer=ee.Reducer.sum(), geometry=aoi, scale=10, maxPixels=1e9
-        ).get('nd').getInfo()
+        ).get('NDVI').getInfo()
 
-        # Handle cases where area is None and calculate total area
-        poor_area = poor_area if poor_area is not None else 0
-        moderate_area = moderate_area if moderate_area is not None else 0
-        good_area = good_area if good_area is not None else 0
+        #GET High Reso NVDI
+        image_ndvi_url = ndvi.getDownloadURL({
+            'scale': 10,
+            'crs': 'EPSG:3857',
+            'region': aoi.bounds(),
+            'fileFormat': 'GeoTIFF',
+            'formatOptions': {
+                'cloudOptimized': True
+            }
+        })
+
+        # ==================================
+        # 2. SOIL ANALYSIS (BSI)
+        # ==================================
+        # Calculate BSI and rename the band to 'BSI'
+        bsi = image.expression(
+            '((B11 + B4) - (B8 + B2)) / ((B11 + B4) + (B8 + B2))', {
+                'B11': image.select('B11'),
+                'B4': image.select('B4'),
+                'B8': image.select('B8'),
+                'B2': image.select('B2')
+            }).rename('BSI')
+
+        # Define BSI visualization parameters
+        # Higher values indicate bare soil
+        bsi_palette = ['0000FF', '87CEFA', 'FFFFFF', 'FFB6C1', 'FF0000'] # Blue (water) to White to Red (bare soil)
+
+        # Generate a thumbnail URL for BSI
+        bsi_map_url = bsi.getThumbUrl({
+            'dimensions': 512,
+            'format': 'png',
+            'crs': 'EPSG:3857',
+            'region': aoi.bounds(),
+            'min': -0.5,
+            'max': 0.5,
+            'palette': bsi_palette
+        })
+
+        # Calculate the area of each BSI soil category
+        high_bsi_area = bsi.gte(0.2).multiply(ee.Image.pixelArea()).reduceRegion(
+            reducer=ee.Reducer.sum(), geometry=aoi, scale=10, maxPixels=1e9
+        ).get('BSI').getInfo()
+
+        med_bsi_area = bsi.gte(-0.2).And(bsi.lt(0.2)).multiply(ee.Image.pixelArea()).reduceRegion(
+            reducer=ee.Reducer.sum(), geometry=aoi, scale=10, maxPixels=1e9
+        ).get('BSI').getInfo()
         
-        total_calculated_area = poor_area + moderate_area + good_area
+        low_bsi_area = bsi.lt(-0.2).multiply(ee.Image.pixelArea()).reduceRegion(
+            reducer=ee.Reducer.sum(), geometry=aoi, scale=10, maxPixels=1e9
+        ).get('BSI').getInfo()
+
+
+        # Handle None values and calculate total areas
+        poor_ndvi_area = poor_ndvi_area if poor_ndvi_area is not None else 0
+        moderate_ndvi_area = moderate_ndvi_area if moderate_ndvi_area is not None else 0
+        good_ndvi_area = good_ndvi_area if good_ndvi_area is not None else 0
+        total_ndvi_area = poor_ndvi_area + moderate_ndvi_area + good_ndvi_area
+
+        high_bsi_area = high_bsi_area if high_bsi_area is not None else 0
+        med_bsi_area = med_bsi_area if med_bsi_area is not None else 0
+        low_bsi_area = low_bsi_area if low_bsi_area is not None else 0
+        total_bsi_area = high_bsi_area + med_bsi_area + low_bsi_area
         
-        if total_calculated_area == 0:
-             return {"error": "No pixels found for analysis. The polygon may be too small or off-land."}
+        if total_ndvi_area == 0 or total_bsi_area == 0:
+            return {"error": "No pixels found for analysis. The polygon may be too small or off-land."}
         
         # Calculate percentages
-        poor_percent = (poor_area / total_calculated_area) * 100
-        moderate_percent = (moderate_area / total_calculated_area) * 100
-        good_percent = (good_area / total_calculated_area) * 100
+        poor_ndvi_percent = (poor_ndvi_area / total_ndvi_area) * 100
+        moderate_ndvi_percent = (moderate_ndvi_area / total_ndvi_area) * 100
+        good_ndvi_percent = (good_ndvi_area / total_ndvi_area) * 100
+
+        high_bsi_percent = (high_bsi_area / total_bsi_area) * 100
+        med_bsi_percent = (med_bsi_area / total_bsi_area) * 100
+        low_bsi_percent = (low_bsi_area / total_bsi_area) * 100
+
 
         # Return the results
         return {
-            "mapUrl": map_url,
+            "ndviMapUrl": ndvi_map_url,
+            "bsiMapUrl": bsi_map_url,
             "report": {
-                "poor": poor_percent,
-                "moderate": moderate_percent,
-                "good": good_percent
+                "ndvi": {
+                    "poor": poor_ndvi_percent,
+                    "moderate": moderate_ndvi_percent,
+                    "good": good_ndvi_percent
+                },
+                "bsi": {
+                    "high": high_bsi_percent,
+                    "medium": med_bsi_percent,
+                    "low": low_bsi_percent
+                }
             },
             "acquisitionDate": acquisition_date
         }
@@ -91,6 +164,7 @@ def analyze_gee(polygon_geojson, start_date, end_date):
     except Exception as e:
         print(f"GEE analysis failed: {e}")
         return {"error": str(e)}
+
 
 # Route for the main pageear
 @app.route('/')
@@ -124,7 +198,7 @@ def analyze():
 
 if __name__ == '__main__':
     service_ac = "user-374@agri-471404.iam.gserviceaccount.com"
-    credentials = ee.ServiceAccountCredentials(service_ac, '.gitignore/gee/agri-471404-6da4ecee8723.json')  
+    credentials = ee.ServiceAccountCredentials(service_ac, 'credentials/agri-471404-201b5260c966.json')
     # Initialize GEE once when the app starts
     try:
         ee.Initialize(credentials)
