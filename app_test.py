@@ -32,6 +32,14 @@ def analyze_gee(polygon_geojson, start_date, end_date):
         # Get the image acquisition date for the report
         acquisition_date = ee.Date(collection.first().get('system:time_start')).format('YYYY-MM-DD').getInfo()
 
+        # Get the bounds of the AOI in [min_lon, min_lat, max_lon, max_lat] format
+        bounds_geojson = aoi.bounds().getInfo()['coordinates'][0]
+        # The GEE bounds format is a list of [lon, lat] pairs.
+        min_lon = min(p[0] for p in bounds_geojson)
+        min_lat = min(p[1] for p in bounds_geojson)
+        max_lon = max(p[0] for p in bounds_geojson)
+        max_lat = max(p[1] for p in bounds_geojson)
+        bounds = [min_lon, min_lat, max_lon, max_lat]
 
         # ==================================
         # 1. VEGETATION HEALTH ANALYSIS (NDVI)
@@ -71,7 +79,7 @@ def analyze_gee(polygon_geojson, start_date, end_date):
             'scale': 10,
             'crs': 'EPSG:3857',
             'region': aoi.bounds(),
-            'fileFormat': 'GeoTIFF',
+            'fileFormat': 'NPY',
             'formatOptions': {
                 'cloudOptimized': True
             }
@@ -102,6 +110,16 @@ def analyze_gee(polygon_geojson, start_date, end_date):
             'min': -0.5,
             'max': 0.5,
             'palette': bsi_palette
+        })
+
+        image_bsi_url = bsi.getDownloadURL({
+            'scale': 10,
+            'crs': 'EPSG:3857',
+            'region': aoi.bounds(),
+            'fileFormat': 'NPY',
+            'formatOptions': {
+                'cloudOptimized': True
+            }
         })
 
         # Calculate the area of each BSI soil category
@@ -146,6 +164,7 @@ def analyze_gee(polygon_geojson, start_date, end_date):
         return {
             "ndviMapUrl": ndvi_map_url,
             "bsiMapUrl": bsi_map_url,
+            "bounds": bounds,
             "report": {
                 "ndvi": {
                     "poor": poor_ndvi_percent,

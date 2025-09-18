@@ -3,13 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Farmland Profitability System</title>
+    <title>Farmland Profitability System (GEE Edition)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1.10.4/dayjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
     <style>
         body, html, #app-container {
             height: 100%;
@@ -31,18 +32,9 @@
         #results-container {
             display: none;
         }
-        .map-frame {
-            border: 2px solid #e5e7eb;
-            border-radius: 0.5rem;
-            overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-        .map-frame img {
-            max-width: 100%;
-            height: auto;
-            border-radius: 0.25rem;
+        #historical-chart-container {
+            display: none;
+            height: 300px;
         }
     </style>
 </head>
@@ -51,7 +43,7 @@
     <div id="app-container" class="min-h-screen flex flex-col p-4 md:p-8">
         <header class="bg-white rounded-xl shadow-lg p-4 mb-4 md:mb-8 flex flex-col md:flex-row items-center justify-between">
             <h1 class="text-3xl font-bold text-gray-900 mb-2 md:mb-0">Farmland Profitability System</h1>
-            <p class="text-sm md:text-base text-gray-500 text-center">Developed by Isaac Wu</p>
+            <p class="text-sm md:text-base text-gray-500 text-center">Powered by Google Earth Engine</p>
         </header>
 
         <div class="flex-grow grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-8">
@@ -75,6 +67,33 @@
                             <label for="end-date" class="block text-sm font-medium text-gray-700 mb-1">End Date</label>
                             <input type="date" id="end-date" class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500" value="2024-05-30">
                         </div>
+
+                        <!-- Analysis Type Selection -->
+                        <div class="space-y-2">
+                            <label class="block text-sm font-medium text-gray-700">Analysis Type</label>
+                            <div class="flex space-x-4">
+                                <label class="inline-flex items-center">
+                                    <input type="radio" name="analysis-type" id="single-image-radio" value="single" class="form-radio text-green-600 focus:ring-green-500" checked>
+                                    <span class="ml-2 text-gray-700">Single Image</span>
+                                </label>
+                                <label class="inline-flex items-center">
+                                    <input type="radio" name="analysis-type" id="time-series-radio" value="time-series" class="form-radio text-green-600 focus:ring-green-500">
+                                    <span class="ml-2 text-gray-700">Time Series</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Time Series Interval Selection -->
+                        <div id="time-series-interval" class="hidden">
+                            <label for="time-frame" class="block text-sm font-medium text-gray-700 mb-1">Time Interval</label>
+                            <select id="time-frame" class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
+                                <option value="bi-weekly">Bi-weekly</option>
+                                <option value="monthly" selected>Monthly</option>
+                                <option value="quarterly">Quarterly</option>
+                                <option value="yearly">Yearly</option>
+                            </select>
+                        </div>
+                        
                         <button id="analyze-button" class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-full shadow-lg hover:bg-green-700 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50">
                             Analyze Farmland
                         </button>
@@ -93,55 +112,58 @@
                     <div id="results-container">
                         <h2 class="text-2xl font-semibold text-gray-700 mb-4">3. Analysis Report</h2>
                         <div id="analysis-results" class="grid grid-cols-1 gap-4">
-                            <!-- NDVI Map & Report Section -->
-                            <div id="ndvi-container" class="report-section bg-gray-50 p-4 rounded-lg">
-                                <h3 class="font-bold text-gray-800 text-lg mb-2">Vegetation Health (NDVI)</h3>
-                                <div class="map-frame mb-4">
-                                    <img id="ndvi-map-image" src="" alt="NDVI Map">
+                            <!-- Historical Chart Section -->
+                            <div id="historical-chart-container" class="bg-gray-50 p-4 rounded-lg">
+                                <h3 class="font-bold text-gray-800 text-lg mb-2">Historical NDVI Trend</h3>
+                                <canvas id="ndvi-chart"></canvas>
+                            </div>
+
+                            <!-- Single Image Report Sections (default view) -->
+                            <div id="single-image-reports">
+                                <!-- NDVI Report Section -->
+                                <div id="ndvi-container" class="report-section bg-gray-50 p-4 rounded-lg">
+                                    <h3 class="font-bold text-gray-800 text-lg mb-2">Vegetation Health (NDVI)</h3>
+                                    <p class="text-sm text-gray-600">This report is based on the satellite image acquired on <span id="image-date" class="font-semibold"></span>.</p>
+                                    <div id="ndvi-report-summary" class="mt-4 space-y-1">
+                                        <p class="flex justify-between items-center text-gray-700">
+                                            <span class="font-semibold">Good Health:</span>
+                                            <span id="ndvi-good-health" class="text-green-600 font-bold"></span>
+                                        </p>
+                                        <p class="flex justify-between items-center text-gray-700">
+                                            <span class="font-semibold">Moderate Health:</span>
+                                            <span id="ndvi-moderate-health" class="text-yellow-600 font-bold"></span>
+                                        </p>
+                                        <p class="flex justify-between items-center text-gray-700">
+                                            <span class="font-semibold">Poor Health:</span>
+                                            <span id="ndvi-poor-health" class="text-red-600 font-bold"></span>
+                                        </p>
+                                    </div>
                                 </div>
-                                <p class="text-sm text-gray-600">This report is based on the satellite image acquired on <span id="image-date" class="font-semibold"></span>.</p>
-                                <div id="ndvi-report-summary" class="mt-4 space-y-1">
-                                    <p class="flex justify-between items-center text-gray-700">
-                                        <span class="font-semibold">Good Health:</span>
-                                        <span id="ndvi-good-health" class="text-green-600 font-bold"></span>
-                                    </p>
-                                    <p class="flex justify-between items-center text-gray-700">
-                                        <span class="font-semibold">Moderate Health:</span>
-                                        <span id="ndvi-moderate-health" class="text-yellow-600 font-bold"></span>
-                                    </p>
-                                    <p class="flex justify-between items-center text-gray-700">
-                                        <span class="font-semibold">Poor Health:</span>
-                                        <span id="ndvi-poor-health" class="text-red-600 font-bold"></span>
-                                    </p>
+
+                                <!-- BSI Report Section -->
+                                <div id="bsi-container" class="report-section bg-gray-50 p-4 rounded-lg">
+                                    <h3 class="font-bold text-gray-800 text-lg mb-2">Soil Analysis (BSI)</h3>
+                                    <div id="bsi-report-summary" class="mt-4 space-y-1">
+                                        <p class="flex justify-between items-center text-gray-700">
+                                            <span class="font-semibold">High BSI (Bare Soil):</span>
+                                            <span id="bsi-high" class="text-red-600 font-bold"></span>
+                                        </p>
+                                        <p class="flex justify-between items-center text-gray-700">
+                                            <span class="font-semibold">Medium BSI (Mixed):</span>
+                                            <span id="bsi-medium" class="text-gray-600 font-bold"></span>
+                                        </p>
+                                        <p class="flex justify-between items-center text-gray-700">
+                                            <span class="font-semibold">Low BSI (Vegetated/Water):</span>
+                                            <span id="bsi-low" class="text-blue-600 font-bold"></span>
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
 
-                            <!-- BSI Map & Report Section -->
-                            <div id="bsi-container" class="report-section bg-gray-50 p-4 rounded-lg">
-                                <h3 class="font-bold text-gray-800 text-lg mb-2">Soil Analysis (BSI)</h3>
-                                <div class="map-frame mb-4">
-                                    <img id="bsi-map-image" src="" alt="BSI Map">
+                            <div id="profitability-insights" class="report-section bg-gray-50 p-4 rounded-lg mt-4">
+                                <h3 class="font-bold text-gray-800 text-lg mb-2">Profitability Insights</h3>
+                                <div id="insights-text" class="prose text-sm text-gray-700">
                                 </div>
-                                <div id="bsi-report-summary" class="mt-4 space-y-1">
-                                    <p class="flex justify-between items-center text-gray-700">
-                                        <span class="font-semibold">High BSI (Bare Soil):</span>
-                                        <span id="bsi-high" class="text-red-600 font-bold"></span>
-                                    </p>
-                                    <p class="flex justify-between items-center text-gray-700">
-                                        <span class="font-semibold">Medium BSI (Mixed):</span>
-                                        <span id="bsi-medium" class="text-gray-600 font-bold"></span>
-                                    </p>
-                                    <p class="flex justify-between items-center text-gray-700">
-                                        <span class="font-semibold">Low BSI (Vegetated/Water):</span>
-                                        <span id="bsi-low" class="text-blue-600 font-bold"></span>
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div id="profitability-insights" class="report-section bg-gray-50 p-4 rounded-lg mt-4">
-                            <h3 class="font-bold text-gray-800 text-lg mb-2">Profitability Insights</h3>
-                            <div id="insights-text" class="prose text-sm text-gray-700">
                             </div>
                         </div>
                     </div>
@@ -161,9 +183,13 @@
             const resultsContainer = document.getElementById('results-container');
             const messageBox = document.getElementById('message-box');
             const messageText = document.getElementById('message-text');
-
-            const ndviImage = document.getElementById('ndvi-map-image');
-            const bsiImage = document.getElementById('bsi-map-image');
+            const singleImageRadio = document.getElementById('single-image-radio');
+            const timeSeriesRadio = document.getElementById('time-series-radio');
+            const timeSeriesInterval = document.getElementById('time-series-interval');
+            const timeFrameSelect = document.getElementById('time-frame');
+            const singleImageReports = document.getElementById('single-image-reports');
+            const historicalChartContainer = document.getElementById('historical-chart-container');
+            let ndviChart = null;
 
             // Initialize the map centered on Richmond, BC
             const map = L.map('map').setView([49.166592, -123.133568], 12);
@@ -197,6 +223,8 @@
             map.addControl(drawControl);
 
             let drawnPolygon = null;
+            let currentNdviLayer = null;
+            let currentBsiLayer = null;
 
             map.on(L.Draw.Event.CREATED, (e) => {
                 const layer = e.layer;
@@ -211,6 +239,14 @@
                 showMessage('Draw a polygon on the map to start.', 'bg-yellow-100 text-yellow-700');
             });
 
+            // Listen for changes in the analysis type radio buttons
+            singleImageRadio.addEventListener('change', () => {
+                timeSeriesInterval.classList.add('hidden');
+            });
+            timeSeriesRadio.addEventListener('change', () => {
+                timeSeriesInterval.classList.remove('hidden');
+            });
+
             analyzeButton.addEventListener('click', analyzeFarmland);
 
             async function analyzeFarmland() {
@@ -221,6 +257,8 @@
 
                 const startDate = document.getElementById('start-date').value;
                 const endDate = document.getElementById('end-date').value;
+                const analysisType = document.querySelector('input[name="analysis-type"]:checked').value;
+                const timeFrame = document.getElementById('time-frame').value;
                 const polygonGeoJSON = drawnPolygon.toGeoJSON();
 
                 if (!startDate || !endDate) {
@@ -230,6 +268,7 @@
                 
                 showLoading();
                 hideResults();
+                removeLayers();
 
                 try {
                     const response = await fetch('/analyze', {
@@ -238,7 +277,9 @@
                         body: JSON.stringify({
                             polygon: polygonGeoJSON.geometry,
                             startDate,
-                            endDate
+                            endDate,
+                            analysisType,
+                            timeFrame
                         })
                     });
                     
@@ -248,17 +289,36 @@
                         throw new Error(geeResponse.error);
                     }
                     
-                    // Display the maps in separate frames
-                    ndviImage.src = geeResponse.ndviMapUrl;
-                    bsiImage.src = geeResponse.bsiMapUrl;
-                    
-                    // Update UI with reports from the backend
-                    updateReports(geeResponse.report, geeResponse.acquisitionDate);
-                    updateProfitabilityInsights(geeResponse.report.ndvi);
+                    // Logic to handle single image vs. time series
+                    if (analysisType === 'single') {
+                        // Display single-image report and image overlays
+                        const bounds = L.latLngBounds(
+                            [geeResponse.bounds[1], geeResponse.bounds[0]],
+                            [geeResponse.bounds[3], geeResponse.bounds[2]]
+                        );
+                        currentNdviLayer = L.imageOverlay(geeResponse.ndviMapUrl, bounds, { opacity: 0.7 }).addTo(map);
+                        currentBsiLayer = L.imageOverlay(geeResponse.bsiMapUrl, bounds, { opacity: 0.7 }).addTo(map);
+                        layerControl.addOverlay(currentNdviLayer, "NDVI Map");
+                        layerControl.addOverlay(currentBsiLayer, "BSI Map");
+
+                        updateReports(geeResponse.report, geeResponse.acquisitionDate);
+                        updateProfitabilityInsights(geeResponse.report.ndvi);
+                        showSingleImageReports();
+
+                    } else if (analysisType === 'time-series') {
+                        // Display historical trend chart
+                        renderChart(geeResponse.timeSeriesData);
+                        showHistoricalChart();
+                        updateProfitabilityInsights({
+                            poor: geeResponse.timeSeriesData.averagePoor,
+                            moderate: geeResponse.timeSeriesData.averageModerate,
+                            good: geeResponse.timeSeriesData.averageGood
+                        });
+                    }
 
                     hideLoading();
                     showResults();
-                    showMessage('Analysis complete. View the maps and reports below!', 'bg-green-100 text-green-700');
+                    showMessage('Analysis complete. View the report below!', 'bg-green-100 text-green-700');
 
                 } catch (error) {
                     console.error('An error occurred during analysis:', error);
@@ -267,13 +327,24 @@
                 }
             }
             
+            function removeLayers() {
+                if (currentNdviLayer) {
+                    map.removeLayer(currentNdviLayer);
+                    layerControl.removeLayer(currentNdviLayer);
+                    currentNdviLayer = null;
+                }
+                if (currentBsiLayer) {
+                    map.removeLayer(currentBsiLayer);
+                    layerControl.removeLayer(currentBsiLayer);
+                    currentBsiLayer = null;
+                }
+            }
+
             function updateReports(report, date) {
-                // Update NDVI section
                 document.getElementById('ndvi-good-health').textContent = `${report.ndvi.good.toFixed(2)}%`;
                 document.getElementById('ndvi-moderate-health').textContent = `${report.ndvi.moderate.toFixed(2)}%`;
                 document.getElementById('ndvi-poor-health').textContent = `${report.ndvi.poor.toFixed(2)}%`;
 
-                // Update BSI section
                 document.getElementById('bsi-high').textContent = `${report.bsi.high.toFixed(2)}%`;
                 document.getElementById('bsi-medium').textContent = `${report.bsi.medium.toFixed(2)}%`;
                 document.getElementById('bsi-low').textContent = `${report.bsi.low.toFixed(2)}%`;
@@ -322,13 +393,62 @@
                 insights.innerHTML = html;
             }
 
+            function renderChart(timeSeriesData) {
+                const ctx = document.getElementById('ndvi-chart').getContext('2d');
+                if (ndviChart) {
+                    ndviChart.destroy();
+                }
+
+                const labels = timeSeriesData.dates.map(date => dayjs(date).format('MMM D, YYYY'));
+                const data = timeSeriesData.values;
+
+                ndviChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Average NDVI',
+                            data: data,
+                            borderColor: 'rgba(52, 211, 153, 1)',
+                            backgroundColor: 'rgba(52, 211, 153, 0.2)',
+                            fill: true,
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return `Average NDVI: ${context.parsed.y.toFixed(4)}`;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: false,
+                                title: {
+                                    display: true,
+                                    text: 'Average NDVI'
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
             // --- UI Helper Functions ---
             function showMessage(text, className) {
-                messageBox.className = 'p-4 mt-4 text-sm text-center rounded-lg'; // Reset classes
+                messageBox.className = 'p-4 mt-4 text-sm text-center rounded-lg';
                 messageBox.classList.add(...className.split(' '));
                 messageText.textContent = text;
                 messageBox.classList.remove('hidden');
-                // The results container should remain hidden when showing the message box
                 if (className.includes('bg-red-100') || className.includes('bg-yellow-100')) {
                     hideResults();
                 }
@@ -350,8 +470,26 @@
             
             function hideResults() {
                 resultsContainer.style.display = 'none';
-                ndviImage.src = '';
-                bsiImage.src = '';
+                hideSingleImageReports();
+                hideHistoricalChart();
+            }
+
+            function showSingleImageReports() {
+                singleImageReports.style.display = 'block';
+                historicalChartContainer.style.display = 'none';
+            }
+
+            function hideSingleImageReports() {
+                singleImageReports.style.display = 'none';
+            }
+
+            function showHistoricalChart() {
+                singleImageReports.style.display = 'none';
+                historicalChartContainer.style.display = 'block';
+            }
+
+            function hideHistoricalChart() {
+                historicalChartContainer.style.display = 'none';
             }
             
             showMessage('Draw a polygon on the map to start.', 'bg-blue-100 text-blue-700');
