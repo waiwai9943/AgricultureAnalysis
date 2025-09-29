@@ -10,7 +10,7 @@
             "request": "launch",
             "module": "flask",
             "env": {
-                "FLASK_APP": "app.py",
+                "FLASK_APP": "app_test.py",
                 "FLASK_DEBUG": "1"
             },
             "args": [
@@ -19,7 +19,7 @@
                 "--no-reload"
             ],
             "jinja": true,
-            "autoStartBrowser": false
+            "autoStartBrowser": true
         }
     ]
 }

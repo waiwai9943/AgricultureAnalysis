@@ -5,9 +5,10 @@ import os
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='.')
-
+def multiple_gee(polygon, start_date, end_date, timeframe):
+    return {"error": "Time-series analysis not yet implemented."}
 # GEE analysis function
-def analyze_gee(polygon_geojson, start_date, end_date):
+def single_gee(polygon_geojson, start_date, end_date):
     """
     Performs GEE analysis on a given polygon and date range.
     Returns NDVI map URL and health statistics.
@@ -74,17 +75,6 @@ def analyze_gee(polygon_geojson, start_date, end_date):
             reducer=ee.Reducer.sum(), geometry=aoi, scale=10, maxPixels=1e9
         ).get('NDVI').getInfo()
 
-        #GET High Reso NVDI
-        image_ndvi_url = ndvi.getDownloadURL({
-            'scale': 10,
-            'crs': 'EPSG:3857',
-            'region': aoi.bounds(),
-            'fileFormat': 'NPY',
-            'formatOptions': {
-                'cloudOptimized': True
-            }
-        })
-
         # ==================================
         # 2. SOIL ANALYSIS (BSI)
         # ==================================
@@ -110,16 +100,6 @@ def analyze_gee(polygon_geojson, start_date, end_date):
             'min': -0.5,
             'max': 0.5,
             'palette': bsi_palette
-        })
-
-        image_bsi_url = bsi.getDownloadURL({
-            'scale': 10,
-            'crs': 'EPSG:3857',
-            'region': aoi.bounds(),
-            'fileFormat': 'NPY',
-            'formatOptions': {
-                'cloudOptimized': True
-            }
         })
 
         # Calculate the area of each BSI soil category
@@ -204,16 +184,26 @@ def analyze():
     polygon = data.get('polygon')
     start_date = data.get('startDate')
     end_date = data.get('endDate')
+    analysistype = data.get('analysisType')
 
     if not polygon or not start_date or not end_date:
         return jsonify({"error": "Missing required parameters"}), 400
 
-    results = analyze_gee(polygon, start_date, end_date)
-    
-    if "error" in results:
-        return jsonify(results), 400
+    if analysistype == 'single':
+        single = single_gee(polygon, start_date, end_date)
+        if "error" in single:
+            return jsonify(single), 400
+        else:
+            return jsonify(single)
+    elif analysistype == 'time-series':
+        multiple = multiple_gee(polygon, start_date, end_date, timeframe = data.get(''))
+        if "error" in multiple:
+            return jsonify(multiple), 400
+        else:
+            return jsonify(multiple)
 
-    return jsonify(results)
+    
+
 
 if __name__ == '__main__':
     service_ac = "user-374@agri-471404.iam.gserviceaccount.com"
